@@ -1,0 +1,26 @@
+{
+  "name": "タケノビファミリー司令部",
+  "short_name": "司令部",
+  "description": "タケストレッチ株式会社 — タケノビファミリー司令部",
+  "scope": "/takenobi-shireibu/",
+  "start_url": "/takenobi-shireibu/",
+  "id": "/takenobi-shireibu/",
+  "display": "standalone",
+  "background_color": "#0d1a10",
+  "theme_color": "#5a9e6f",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
