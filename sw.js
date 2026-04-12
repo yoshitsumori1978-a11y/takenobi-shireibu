@@ -1,5 +1,5 @@
 // タケノビファミリー司令部 — Service Worker
-var CACHE_NAME = 'takenobi-shireibu-v2';
+var CACHE_NAME = 'takenobi-shireibu-v3';
 var URLS_TO_CACHE = [
   './',
   './index.html',
@@ -32,7 +32,7 @@ self.addEventListener('activate', function(event) {
   self.clients.claim();
 });
 
-// ネットワーク優先、失敗時にキャッシュ（常に最新を取得しつつオフライン対応）
+// キャッシュ優先 → バックグラウンドで更新（Stale While Revalidate）
 self.addEventListener('fetch', function(event) {
   // Google API・外部CDNはキャッシュしない
   if (event.request.url.indexOf('googleapis.com') >= 0 ||
@@ -42,18 +42,22 @@ self.addEventListener('fetch', function(event) {
   }
 
   event.respondWith(
-    fetch(event.request).then(function(response) {
-      // 正常レスポンスをキャッシュに保存
-      if (response && response.status === 200) {
-        var responseClone = response.clone();
-        caches.open(CACHE_NAME).then(function(cache) {
-          cache.put(event.request, responseClone);
-        });
-      }
-      return response;
-    }).catch(function() {
-      // オフライン時はキャッシュから返す
-      return caches.match(event.request);
+    caches.match(event.request).then(function(cachedResponse) {
+      // バックグラウンドで最新版を取得してキャッシュ更新
+      var fetchPromise = fetch(event.request).then(function(networkResponse) {
+        if (networkResponse && networkResponse.status === 200) {
+          var responseClone = networkResponse.clone();
+          caches.open(CACHE_NAME).then(function(cache) {
+            cache.put(event.request, responseClone);
+          });
+        }
+        return networkResponse;
+      }).catch(function() {
+        return cachedResponse;
+      });
+
+      // キャッシュがあればすぐ返す、なければネットワークを待つ
+      return cachedResponse || fetchPromise;
     })
   );
 });
