@@ -3795,7 +3795,7 @@ function handleGcalAuth() {
 }
 
 // --- Google Cloud Vision OCR ---
-var VISION_API_KEY = 'AIzaSyBBgDX5krP-O3gX-q5dQm_7Sj-ie_y0Hng';
+var VISION_API_KEY = secureLoad('vision_api_key_s') || '';
 
 function resizeImageForOCR(dataUrl, callback) {
   var MAX_WIDTH = 1600;
@@ -3823,6 +3823,16 @@ function resizeImageForOCR(dataUrl, callback) {
 }
 
 function callVisionOCR(imageDataUrl, callback) {
+  if (!VISION_API_KEY) {
+    var key = prompt('📸 OCR機能を使うにはVision APIキーが必要です。\nGoogle Cloud Consoleで取得したキーを入力してください:');
+    if (key && key.trim()) {
+      VISION_API_KEY = key.trim();
+      secureStore('vision_api_key_s', VISION_API_KEY);
+    } else {
+      callback(new Error('Vision APIキーが未設定です'), '');
+      return;
+    }
+  }
   var base64 = imageDataUrl.replace(/^data:image\/[^;]+;base64,/, '');
   var body = {
     requests: [{
@@ -4768,6 +4778,7 @@ function renderNotionPages(pages) {
     if (settings.notion_db_id_s) NOTION_DB_ID = settings.notion_db_id_s;
     if (settings.gcal_cid_s) GCAL_CLIENT_ID = settings.gcal_cid_s;
     if (settings.gcal_ak_s) GCAL_API_KEY = settings.gcal_ak_s;
+    if (settings.vision_api_key_s) VISION_API_KEY = settings.vision_api_key_s;
     if (settings.notion_proxy_url) NOTION_PROXY = settings.notion_proxy_url;
     console.log('[Takenobi] Settings applied - NOTION_TOKEN:', !!NOTION_TOKEN, 'DB_ID:', !!NOTION_DB_ID);
   }
