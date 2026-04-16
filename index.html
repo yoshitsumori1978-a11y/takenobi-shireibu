@@ -3146,14 +3146,42 @@ function renderTodayCalEvents() {
   var container = document.getElementById('todayCalEvents');
   if (!container) return;
 
-  if (todayCalEventsData.length === 0) {
+  // その日のカレンダーメモを取得
+  var target = new Date();
+  target.setDate(target.getDate() + calDayOffset);
+  var dateKey = target.getFullYear() + '-' + String(target.getMonth()+1).padStart(2,'0') + '-' + String(target.getDate()).padStart(2,'0');
+  var dayMemo = localStorage.getItem('cal_memo_' + dateKey) || '';
+
+  if (todayCalEventsData.length === 0 && !dayMemo) {
     var emptyLabel = calDayOffset === 0 ? '今日' : calDayOffset === 1 ? '明日' : calDayOffset === -1 ? '昨日' : 'この日';
     container.innerHTML = '<div class="today-cal-empty">\u{1F343} ' + emptyLabel + 'の予定はありません</div>';
     return;
   }
 
+  var html = '';
+
+  // カレンダーメモを先頭に表示
+  if (dayMemo) {
+    var memoLines = dayMemo.split('\n');
+    html += memoLines.map(function(line) {
+      if (!line.trim()) return '';
+      return '<div class="today-cal-event">' +
+        '<div class="cal-event-dot" style="background:var(--green);"></div>' +
+        '<div class="cal-event-time">📝</div>' +
+        '<div class="cal-event-details">' +
+          '<div class="cal-event-title">' + escHtml(line.trim()) + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  if (todayCalEventsData.length === 0) {
+    container.innerHTML = html;
+    return;
+  }
+
   var doneSet = getCalDoneSet();
-  container.innerHTML = todayCalEventsData.map(function(ev) {
+  html += todayCalEventsData.map(function(ev) {
     var timeStr = '';
     if (ev.start && ev.start.dateTime) {
       var s = new Date(ev.start.dateTime);
@@ -3201,6 +3229,7 @@ function renderTodayCalEvents() {
       '</div>' +
     '</div>';
   }).join('');
+  container.innerHTML = html;
 }
 
 // === 月間カレンダー ===
@@ -3349,6 +3378,7 @@ function saveCalMemo() {
     } catch(e) {}
   }
   renderMonthCalendar();
+  renderTodayCalEvents();
 }
 
 function deleteCalMemo() {
@@ -3360,6 +3390,7 @@ function deleteCalMemo() {
     fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).catch(function(){});
   } catch(e) {}
   renderMonthCalendar();
+  renderTodayCalEvents();
 }
 
 // --- 音声入力（Web Speech API） ---
