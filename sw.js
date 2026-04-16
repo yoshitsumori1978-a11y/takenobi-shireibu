@@ -1,5 +1,5 @@
 // タケノビファミリー司令部 — Service Worker
-var CACHE_NAME = 'takenobi-shireibu-v3';
+var CACHE_NAME = 'takenobi-shireibu-v4';
 var URLS_TO_CACHE = [
   './',
   './index.html',
