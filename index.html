@@ -1808,11 +1808,11 @@ body::before {
             <span>&#x1F4F8; スキャン写真 <span class="photo-gallery-count" id="pgCount">0</span></span>
             <span class="photo-gallery-toggle" id="pgToggle">&#x25BC;</span>
           </div>
+          <div id="pgDriveBar" style="display:none;padding:10px 14px;border-bottom:1px solid var(--border-bamboo);align-items:center;gap:8px;flex-wrap:wrap;">
+            <button onclick="driveSyncClick();" style="background:linear-gradient(135deg,#4285f4,#34a853);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;">☁️ Google Driveと同期</button>
+            <span id="driveSyncStatus" style="font-size:11px;color:var(--text-dim);"></span>
+          </div>
           <div class="photo-gallery-body" id="pgBody" style="display:none;">
-            <div style="padding:10px 14px;border-bottom:1px solid var(--border-bamboo);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <button onclick="event.stopPropagation();driveSyncClick();" style="background:linear-gradient(135deg,#4285f4,#34a853);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;">☁️ Google Driveと同期</button>
-              <span id="driveSyncStatus" style="font-size:11px;color:var(--text-dim);"></span>
-            </div>
             <div class="photo-gallery-empty" id="pgEmpty">まだスキャン写真はありません</div>
           </div>
         </div>
@@ -5368,13 +5368,16 @@ function _renderPhotoGalleryInner(photos) {
 function togglePhotoGallery() {
   var bodyEl = document.getElementById('pgBody');
   var toggleEl = document.getElementById('pgToggle');
+  var driveBar = document.getElementById('pgDriveBar');
   if (!bodyEl) return;
   if (bodyEl.style.display === 'none') {
     bodyEl.style.display = 'block';
+    if (driveBar) driveBar.style.display = 'flex';
     toggleEl.innerHTML = '&#x25B2;';
     renderPhotoGallery();
   } else {
     bodyEl.style.display = 'none';
+    if (driveBar) driveBar.style.display = 'none';
     toggleEl.innerHTML = '&#x25BC;';
   }
 }
