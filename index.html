@@ -4346,13 +4346,15 @@ function openBulkEventDialog() {
       '<div class="quick-scan-modal-title">\u{1F4DD} テキストで一括カレンダー登録</div>' +
       '<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;line-height:1.6;">' +
         '1行につき1予定。以下の形式で入力：<br>' +
-        '<code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;">日付 時刻 タイトル @場所</code><br>' +
-        '例: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;">2026-04-25 10:00 会議 @駐車場</code><br>' +
-        '※ 終了時刻は自動で +2時間、@場所は省略可' +
+        '<code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;">日付 時刻 タイトル @場所 !毎週</code><br>' +
+        '例: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;">2026-04-02 16:50 書道 @書道教室 !毎週</code><br>' +
+        '※ 終了時刻は自動で +2時間、@場所・!繰り返しは省略可<br>' +
+        '※ 繰り返し: <code>!毎週</code> <code>!毎日</code> <code>!毎月</code> （期限付: <code>!毎週:2027-03-31</code>）' +
       '</div>' +
-      '<textarea id="bulkEventText" style="width:100%;min-height:240px;background:var(--bg-darkest);color:var(--text-bright);border:1px solid var(--border-bamboo);border-radius:6px;padding:10px;font-size:13px;font-family:monospace;box-sizing:border-box;" placeholder="1行ずつ予定を入力..."></textarea>' +
+      '<textarea id="bulkEventText" style="width:100%;min-height:200px;background:var(--bg-darkest);color:var(--text-bright);border:1px solid var(--border-bamboo);border-radius:6px;padding:10px;font-size:13px;font-family:monospace;box-sizing:border-box;" placeholder="1行ずつ予定を入力..."></textarea>' +
       '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
-        '<button onclick="fillBulkSample()" style="background:rgba(90,158,111,0.2);border:1px solid var(--bamboo-dark);color:var(--text-bright);padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;">\u{1F4CB} もうこクラブ予定を入れる</button>' +
+        '<button onclick="fillBulkSample()" style="background:rgba(90,158,111,0.2);border:1px solid var(--bamboo-dark);color:var(--text-bright);padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;">\u{1F4CB} もうこクラブ予定</button>' +
+        '<button onclick="fillShodoSample()" style="background:rgba(90,158,111,0.2);border:1px solid var(--bamboo-dark);color:var(--text-bright);padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;">\u{1F58C} 毎週木曜 書道</button>' +
         '<button onclick="submitBulkEvents()" style="background:linear-gradient(135deg,#4285f4,#34a853);color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;flex:1;">\u{1F4C5} Googleカレンダーに登録</button>' +
       '</div>' +
       '<div id="bulkEventResult" style="margin-top:12px;font-size:13px;"></div>' +
@@ -4367,13 +4369,19 @@ function fillBulkSample() {
   if (ta) ta.value = window._bulkEventSample || '';
 }
 
+function fillShodoSample() {
+  // 2026年4月の最初の木曜日 = 2026-04-02
+  var ta = document.getElementById('bulkEventText');
+  if (ta) ta.value = '2026-04-02 16:50 プラスリー迎え、書道へ（書道セット） !毎週';
+}
+
 function closeBulkEventDialog() {
   var ov = document.getElementById('bulkEventOverlay');
   if (ov) ov.remove();
 }
 
 function parseBulkEventLine(line) {
-  // 形式: 2026-04-25 10:00 タイトル @場所
+  // 形式: 2026-04-25 10:00 タイトル @場所 !繰り返し
   // または: 2026/4/25 10:00 タイトル
   var trimmed = line.trim();
   if (!trimmed) return null;
@@ -4392,6 +4400,24 @@ function parseBulkEventLine(line) {
     rest = rest.substring(timeMatch[0].length).trim();
   }
 
+  // 繰り返し抽出 (!weekly, !毎週, !daily, !毎日, !monthly, !毎月)
+  var recurrence = null;
+  var recurMatch = rest.match(/!(weekly|毎週|daily|毎日|monthly|毎月)(?::(\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}))?/);
+  if (recurMatch) {
+    var freq = (recurMatch[1] === '毎週' || recurMatch[1] === 'weekly') ? 'WEEKLY' :
+               (recurMatch[1] === '毎日' || recurMatch[1] === 'daily') ? 'DAILY' :
+               'MONTHLY';
+    var rrule = 'RRULE:FREQ=' + freq;
+    if (recurMatch[2]) {
+      // UNTIL 日付
+      var untilParts = recurMatch[2].split(/[\/\-\.]/);
+      var untilDate = untilParts[0] + untilParts[1].padStart(2,'0') + untilParts[2].padStart(2,'0');
+      rrule += ';UNTIL=' + untilDate + 'T235959Z';
+    }
+    recurrence = [rrule];
+    rest = rest.replace(recurMatch[0], '').trim();
+  }
+
   // 場所抽出 (@以降)
   var location = '';
   var atIdx = rest.indexOf('@');
@@ -4403,9 +4429,10 @@ function parseBulkEventLine(line) {
   var title = rest || '予定';
   // 終了時刻 = 開始 + 2時間
   var h = parseInt(startTime.split(':')[0]) + 2;
+  if (h >= 24) h = 23;
   var endTime = String(h).padStart(2,'0') + ':' + startTime.split(':')[1];
 
-  return { date: date, startTime: startTime, endTime: endTime, title: title, location: location };
+  return { date: date, startTime: startTime, endTime: endTime, title: title, location: location, recurrence: recurrence };
 }
 
 function submitBulkEvents() {
@@ -4445,6 +4472,7 @@ function submitBulkEvents() {
       end: { dateTime: ev.date + 'T' + ev.endTime + ':00', timeZone: 'Asia/Tokyo' }
     };
     if (ev.location) body.location = ev.location;
+    if (ev.recurrence) body.recurrence = ev.recurrence;
 
     gapi.client.calendar.events.insert({
       calendarId: 'primary',
