@@ -3088,6 +3088,32 @@ function toggleCalDone(eventId) {
   renderTodayCalEvents();
 }
 
+// Googleカレンダーイベントを削除
+function deleteGcalEvent(eventId, btnEl) {
+  if (!gcalAccessToken) {
+    alert('Googleカレンダーにログインしてください');
+    return;
+  }
+  if (!confirm('この予定をGoogleカレンダーから削除しますか？\n（元に戻せません）')) return;
+
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '...'; }
+
+  gapi.client.calendar.events.delete({
+    calendarId: 'primary',
+    eventId: eventId
+  }).then(function() {
+    // リストから削除
+    todayCalEventsData = todayCalEventsData.filter(function(e) { return e.id !== eventId; });
+    renderTodayCalEvents();
+    // 月間カレンダーも再取得
+    if (typeof fetchMonthEvents === 'function') fetchMonthEvents();
+  }, function(err) {
+    console.error('Calendar delete error:', err);
+    alert('削除に失敗しました: ' + (err.result && err.result.error ? err.result.error.message : 'エラー'));
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '\u{1F5D1}'; }
+  });
+}
+
 // === Googleカレンダー 今日のイベント取得 ===
 var todayCalEventsData = [];
 var calDayOffset = 0;
@@ -3223,14 +3249,17 @@ function renderTodayCalEvents() {
     var checkClass = isDone ? ' checked' : '';
     var checkMark = isDone ? '\u2713' : '';
 
-    return '<div class="today-cal-event' + doneClass + '">' +
+    var deleteBtn = ev.id ? '<button class="cal-event-delete" onclick="deleteGcalEvent(\'' + ev.id.replace(/'/g, "\\'") + '\', this)" title="Googleカレンダーから削除" style="background:transparent;border:none;color:#e06060;cursor:pointer;font-size:16px;padding:4px 8px;margin-left:auto;">\u{1F5D1}</button>' : '';
+
+    return '<div class="today-cal-event' + doneClass + '" style="display:flex;align-items:center;">' +
       '<button class="cal-event-check' + checkClass + '" onclick="toggleCalDone(\'' + evId.replace(/'/g, "\\'") + '\')" title="' + (isDone ? '未完了に戻す' : '完了にする') + '">' + checkMark + '</button>' +
       '<div class="cal-event-dot" style="background:' + color + ';"></div>' +
       '<div class="cal-event-time">' + timeStr + '</div>' +
-      '<div class="cal-event-details">' +
+      '<div class="cal-event-details" style="flex:1;">' +
         '<div class="cal-event-title">' + escHtml(ev.summary || '\u7121\u984C') + '</div>' +
         (metaHtml ? '<div class="cal-event-meta">' + metaHtml + '</div>' : '') +
       '</div>' +
+      deleteBtn +
     '</div>';
   }).join('');
   container.innerHTML = html;
@@ -4280,6 +4309,52 @@ function openQuickScan(mode) {
   } else {
     document.getElementById('quickFileInput').click();
   }
+}
+
+// ギャラリーの写真からOCR→カレンダー登録
+function scanPhotoToCalendar(id) {
+  getScanPhotos(function(photos) {
+    var photo = null;
+    for (var i = 0; i < photos.length; i++) {
+      if (photos[i].id === id) { photo = photos[i]; break; }
+    }
+    if (!photo || !photo.dataUrl) {
+      alert('写真データが見つかりません');
+      return;
+    }
+    showQuickScanModalFromData(photo.dataUrl);
+  });
+}
+
+// 既存のdataUrlから Quick Scan モーダルを起動（ギャラリー再OCR用）
+function showQuickScanModalFromData(dataUrl) {
+  var overlay = document.createElement('div');
+  overlay.className = 'quick-scan-overlay';
+  overlay.id = 'quickScanOverlay';
+  overlay.onclick = function(ev) { if (ev.target === overlay) closeQuickScan(); };
+
+  overlay.innerHTML =
+    '<div class="quick-scan-modal" style="position:relative;">' +
+      '<button class="quick-scan-close" onclick="closeQuickScan()">\u2715</button>' +
+      '<div class="quick-scan-modal-title">\u{1F343} ササリンが読み取ります</div>' +
+      '<div class="photo-preview-container" id="qsPreview" style="display:block;text-align:center;margin-bottom:12px;">' +
+        '<img id="qsPreviewImg" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid var(--border-bamboo);">' +
+      '</div>' +
+      '<div class="ocr-status" id="qsOcrStatus" style="display:block;text-align:center;">' +
+        '<span class="ocr-spinner"></span>' +
+        '<span id="qsOcrStatusText">文字認識エンジンを読み込んでいます...</span>' +
+      '</div>' +
+      '<div id="qsEventArea" style="display:none;"></div>' +
+      '<div class="privacy-badge" style="margin-top:12px;">' +
+        '<span class="lock-icon">\u{1F510}</span>' +
+        '写真はこの端末内でのみ処理' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  document.getElementById('qsPreviewImg').src = dataUrl;
+  resizeImageForOCR(dataUrl, function(resizedUrl) {
+    startQuickOCR(resizedUrl);
+  });
 }
 
 function handleQuickScan(e) {
@@ -5407,6 +5482,7 @@ function _renderPhotoGalleryInner(photos) {
           '<input type="text" class="scan-task-input" placeholder="何をする？" value="' + escHtml(p.action || '') + '" onchange="updatePhotoField(\'' + escHtml(p.id) + '\',\'action\',this.value)">' +
         '</div>' +
         '<div class="photo-gallery-actions">' +
+          '<button class="pg-btn-notion" style="background:linear-gradient(135deg,#4285f4,#34a853);" onclick="scanPhotoToCalendar(\'' + escHtml(p.id) + '\')">\u{1F4C5} カレンダーに登録</button>' +
           '<button class="pg-btn-notion" onclick="savePhotoToNotion(\'' + escHtml(p.id) + '\')">&#x1F343; Notionに保存</button>' +
           '<button class="pg-btn-delete" onclick="deletePhoto(\'' + escHtml(p.id) + '\')">&#x2715; 削除</button>' +
         '</div>' +
