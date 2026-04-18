@@ -3354,7 +3354,8 @@ function renderMonthCalendar() {
         t = String(s.getHours()).padStart(2,'0') + ':' + String(s.getMinutes()).padStart(2,'0');
       } else { t = '\u7D42\u65E5'; }
       var loc = ev.location ? ' \u{1F4CD}' + escHtml(ev.location) : '';
-      html += '<div class="today-cal-event"><div class="cal-event-dot" style="background:var(--gold);"></div><div class="cal-event-time">' + t + '</div><div class="cal-event-details"><div class="cal-event-title">' + escHtml(ev.summary || '') + '</div>' + (loc ? '<div class="cal-event-meta">' + loc + '</div>' : '') + '</div></div>';
+      var delBtn = ev.id ? '<button onclick="deleteGcalEvent(\'' + ev.id.replace(/\'/g, "\\\\'") + '\', this)" title="削除" style="background:transparent;border:none;color:#e06060;cursor:pointer;font-size:14px;padding:4px 6px;margin-left:auto;">\u{1F5D1}</button>' : '';
+      html += '<div class="today-cal-event" style="display:flex;align-items:center;"><div class="cal-event-dot" style="background:var(--gold);"></div><div class="cal-event-time">' + t + '</div><div class="cal-event-details" style="flex:1;"><div class="cal-event-title">' + escHtml(ev.summary || '') + '</div>' + (loc ? '<div class="cal-event-meta">' + loc + '</div>' : '') + '</div>' + delBtn + '</div>';
     });
     html += '</div>';
   } else if (monthCalSelected) {
