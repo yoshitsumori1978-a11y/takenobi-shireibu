@@ -1798,6 +1798,9 @@ body::before {
           <button class="quick-voice-btn" id="quickVoiceBtn" onclick="startQuickVoiceEvent()">
             &#x1F3A4; 音声で予定追加
           </button>
+          <button class="quick-voice-btn" style="background:linear-gradient(135deg,#4285f4,#34a853);" onclick="openBulkEventDialog()">
+            &#x1F4DD; テキストで一括登録
+          </button>
         </div>
         <input type="file" id="quickCameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleQuickScan(event)">
         <input type="file" id="quickFileInput" accept="image/*,.pdf,.jpg,.jpeg,.png" style="display:none;" onchange="handleQuickScan(event)">
@@ -4309,6 +4312,174 @@ function openQuickScan(mode) {
   } else {
     document.getElementById('quickFileInput').click();
   }
+}
+
+// === テキストから一括カレンダー登録 ===
+function openBulkEventDialog() {
+  if (!gcalAccessToken) {
+    if (confirm('Googleカレンダーにログインが必要です。ログインしますか？')) {
+      if (typeof handleGcalAuth === 'function') handleGcalAuth();
+    }
+    return;
+  }
+
+  var overlay = document.createElement('div');
+  overlay.className = 'quick-scan-overlay';
+  overlay.id = 'bulkEventOverlay';
+  overlay.onclick = function(ev) { if (ev.target === overlay) closeBulkEventDialog(); };
+
+  var sampleText = '2026-04-25 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2026-05-23 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2026-06-27 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2026-07-25 10:00 もうこさとやまクラブ定例会（こばねぐち相談） @孟子不動谷入口駐車場\n' +
+    '2026-08-22 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2026-09-26 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2026-10-24 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2026-11-21 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2026-12-26 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場\n' +
+    '2027-01-23 10:00 もうこさとやまクラブ定例会 @孟子不動谷入口駐車場';
+
+  overlay.innerHTML =
+    '<div class="quick-scan-modal" style="position:relative;max-width:600px;">' +
+      '<button class="quick-scan-close" onclick="closeBulkEventDialog()">\u2715</button>' +
+      '<div class="quick-scan-modal-title">\u{1F4DD} テキストで一括カレンダー登録</div>' +
+      '<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;line-height:1.6;">' +
+        '1行につき1予定。以下の形式で入力：<br>' +
+        '<code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;">日付 時刻 タイトル @場所</code><br>' +
+        '例: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;">2026-04-25 10:00 会議 @駐車場</code><br>' +
+        '※ 終了時刻は自動で +2時間、@場所は省略可' +
+      '</div>' +
+      '<textarea id="bulkEventText" style="width:100%;min-height:240px;background:var(--bg-darkest);color:var(--text-bright);border:1px solid var(--border-bamboo);border-radius:6px;padding:10px;font-size:13px;font-family:monospace;box-sizing:border-box;" placeholder="1行ずつ予定を入力..."></textarea>' +
+      '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
+        '<button onclick="fillBulkSample()" style="background:rgba(90,158,111,0.2);border:1px solid var(--bamboo-dark);color:var(--text-bright);padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;">\u{1F4CB} もうこクラブ予定を入れる</button>' +
+        '<button onclick="submitBulkEvents()" style="background:linear-gradient(135deg,#4285f4,#34a853);color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;flex:1;">\u{1F4C5} Googleカレンダーに登録</button>' +
+      '</div>' +
+      '<div id="bulkEventResult" style="margin-top:12px;font-size:13px;"></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  // サンプルを保持
+  window._bulkEventSample = sampleText;
+}
+
+function fillBulkSample() {
+  var ta = document.getElementById('bulkEventText');
+  if (ta) ta.value = window._bulkEventSample || '';
+}
+
+function closeBulkEventDialog() {
+  var ov = document.getElementById('bulkEventOverlay');
+  if (ov) ov.remove();
+}
+
+function parseBulkEventLine(line) {
+  // 形式: 2026-04-25 10:00 タイトル @場所
+  // または: 2026/4/25 10:00 タイトル
+  var trimmed = line.trim();
+  if (!trimmed) return null;
+
+  // 日付抽出
+  var dateMatch = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+  if (!dateMatch) return null;
+  var date = dateMatch[1] + '-' + dateMatch[2].padStart(2,'0') + '-' + dateMatch[3].padStart(2,'0');
+  var rest = trimmed.substring(dateMatch[0].length).trim();
+
+  // 時刻抽出
+  var timeMatch = rest.match(/^(\d{1,2}):(\d{2})/);
+  var startTime = '10:00';
+  if (timeMatch) {
+    startTime = timeMatch[1].padStart(2,'0') + ':' + timeMatch[2];
+    rest = rest.substring(timeMatch[0].length).trim();
+  }
+
+  // 場所抽出 (@以降)
+  var location = '';
+  var atIdx = rest.indexOf('@');
+  if (atIdx >= 0) {
+    location = rest.substring(atIdx + 1).trim();
+    rest = rest.substring(0, atIdx).trim();
+  }
+
+  var title = rest || '予定';
+  // 終了時刻 = 開始 + 2時間
+  var h = parseInt(startTime.split(':')[0]) + 2;
+  var endTime = String(h).padStart(2,'0') + ':' + startTime.split(':')[1];
+
+  return { date: date, startTime: startTime, endTime: endTime, title: title, location: location };
+}
+
+function submitBulkEvents() {
+  var ta = document.getElementById('bulkEventText');
+  var resultEl = document.getElementById('bulkEventResult');
+  if (!ta || !resultEl) return;
+
+  if (!gcalAccessToken) {
+    resultEl.innerHTML = '<span style="color:#e06060;">⚠️ Googleカレンダーにログインしてください</span>';
+    return;
+  }
+
+  var lines = ta.value.split(/\n/);
+  var events = [];
+  var invalidLines = [];
+  lines.forEach(function(line, idx) {
+    var ev = parseBulkEventLine(line);
+    if (ev) events.push(ev);
+    else if (line.trim()) invalidLines.push(idx + 1);
+  });
+
+  if (events.length === 0) {
+    resultEl.innerHTML = '<span style="color:#e06060;">解析できる予定がありません</span>';
+    return;
+  }
+
+  if (!confirm(events.length + '件の予定をGoogleカレンダーに登録しますか？' +
+    (invalidLines.length > 0 ? '\n\n⚠️ 解析できない行: ' + invalidLines.length + '件（スキップ）' : ''))) return;
+
+  resultEl.innerHTML = '<span style="color:var(--text-dim);">☁️ 登録中...</span>';
+
+  var successCount = 0, errorCount = 0, completed = 0, errors = [];
+  events.forEach(function(ev) {
+    var body = {
+      summary: ev.title,
+      start: { dateTime: ev.date + 'T' + ev.startTime + ':00', timeZone: 'Asia/Tokyo' },
+      end: { dateTime: ev.date + 'T' + ev.endTime + ':00', timeZone: 'Asia/Tokyo' }
+    };
+    if (ev.location) body.location = ev.location;
+
+    gapi.client.calendar.events.insert({
+      calendarId: 'primary',
+      resource: body
+    }).then(function() {
+      successCount++; completed++;
+      if (completed === events.length) showBulkResult(successCount, errorCount, errors, invalidLines);
+    }, function(err) {
+      errorCount++; completed++;
+      errors.push(ev.date + ' ' + ev.title);
+      console.error('Bulk calendar error:', err);
+      if (completed === events.length) showBulkResult(successCount, errorCount, errors, invalidLines);
+    });
+  });
+}
+
+function showBulkResult(success, errors, errorList, invalidLines) {
+  var resultEl = document.getElementById('bulkEventResult');
+  if (!resultEl) return;
+  var html = '';
+  if (errors === 0) {
+    html = '<div style="color:var(--bamboo-light);font-weight:700;">✅ ' + success + '件の予定を登録しました！</div>';
+    // 今日の予定を再取得
+    if (typeof fetchTodayCalEvents === 'function') fetchTodayCalEvents();
+    if (typeof fetchMonthEvents === 'function') fetchMonthEvents();
+    setTimeout(function() { closeBulkEventDialog(); }, 2500);
+  } else {
+    html = '<div style="color:var(--orange);font-weight:700;">✅ 成功: ' + success + '件 / ❌ 失敗: ' + errors + '件</div>';
+    if (errorList && errorList.length > 0) {
+      html += '<div style="font-size:11px;color:var(--text-dim);margin-top:4px;">失敗: ' + errorList.join(', ') + '</div>';
+    }
+  }
+  if (invalidLines && invalidLines.length > 0) {
+    html += '<div style="font-size:11px;color:var(--text-dim);margin-top:4px;">解析不可の行: ' + invalidLines.join(', ') + '</div>';
+  }
+  resultEl.innerHTML = html;
 }
 
 // ギャラリーの写真からOCR→カレンダー登録
