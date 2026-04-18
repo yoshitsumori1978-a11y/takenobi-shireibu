@@ -1809,6 +1809,10 @@ body::before {
             <span class="photo-gallery-toggle" id="pgToggle">&#x25BC;</span>
           </div>
           <div class="photo-gallery-body" id="pgBody" style="display:none;">
+            <div style="padding:10px 14px;border-bottom:1px solid var(--border-bamboo);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <button onclick="event.stopPropagation();driveSyncClick();" style="background:linear-gradient(135deg,#4285f4,#34a853);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;">☁️ Google Driveと同期</button>
+              <span id="driveSyncStatus" style="font-size:11px;color:var(--text-dim);"></span>
+            </div>
             <div class="photo-gallery-empty" id="pgEmpty">まだスキャン写真はありません</div>
           </div>
         </div>
@@ -3687,7 +3691,7 @@ function secureRemove(key) {
 // ※ 初回のみ設定が必要です。Google Cloud ConsoleでOAuth2クライアントIDを取得してください。
 var GCAL_CLIENT_ID = secureLoad('gcal_cid_s') || '325804835579-90kjm5cr8jodjoi08k8m6jns5bvok9sc.apps.googleusercontent.com';
 var GCAL_API_KEY = secureLoad('gcal_ak_s') || '';
-var GCAL_SCOPES = 'https://www.googleapis.com/auth/calendar.events';
+var GCAL_SCOPES = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.appdata';
 var gcalAccessToken = null; // セッション限定（保存しない）
 var gapiLoaded = false;
 var gisLoaded = false;
@@ -3752,6 +3756,12 @@ function handleOAuthRedirectCallback() {
             gapi.client.setToken({ access_token: gcalAccessToken });
             fetchTodayCalEvents();
             fetchMonthEvents();
+            // Drive自動同期
+            setTimeout(function() {
+              if (typeof syncDriveBoth === 'function') {
+                syncDriveBoth(document.getElementById('driveSyncStatus'));
+              }
+            }, 1500);
           });
         }
       }, 300);
@@ -3770,6 +3780,12 @@ function gcalTokenCallback(tokenResponse) {
     document.getElementById('gcalSubmitBtn').disabled = false;
     fetchTodayCalEvents();
     fetchMonthEvents();
+    // ログイン直後にDriveから自動同期
+    setTimeout(function() {
+      if (typeof syncDriveBoth === 'function') {
+        syncDriveBoth(document.getElementById('driveSyncStatus'));
+      }
+    }, 1500);
   }
 }
 
@@ -5050,6 +5066,200 @@ function deleteScanPhoto(id, callback) {
     store.delete(id);
     tx.oncomplete = function() { if (callback) callback(true); };
     tx.onerror = function() { if (callback) callback(false); };
+  });
+}
+
+// 同期ボタンのハンドラ
+function driveSyncClick() {
+  var statusEl = document.getElementById('driveSyncStatus');
+  if (!gcalAccessToken) {
+    if (statusEl) statusEl.textContent = '⚠️ 先にGoogleカレンダーにログインしてください';
+    // ログイン促し
+    if (typeof handleGcalAuth === 'function') {
+      setTimeout(function() { handleGcalAuth(); }, 500);
+    }
+    return;
+  }
+  syncDriveBoth(statusEl);
+}
+
+// 写真保存・削除時に自動でDriveへ反映（ログイン済みのみ）
+function autoSyncToDrive() {
+  if (!gcalAccessToken) return;
+  getScanPhotos(function(photos) {
+    uploadToDrive(photos, function() {});
+  });
+}
+
+// === Google Drive 同期 (appDataFolder - アプリ専用隠しフォルダ) ===
+var DRIVE_FILE_NAME = 'takenobi_scan_photos.json';
+var _driveFileId = null;
+
+// Drive上のバックアップファイルIDを取得
+function findDriveBackupFile(callback) {
+  if (!gcalAccessToken) { callback(null); return; }
+  fetch('https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D%27' + encodeURIComponent(DRIVE_FILE_NAME) + '%27&fields=files(id,modifiedTime)', {
+    headers: { 'Authorization': 'Bearer ' + gcalAccessToken }
+  }).then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.files && data.files.length > 0) {
+        _driveFileId = data.files[0].id;
+        callback(data.files[0]);
+      } else {
+        callback(null);
+      }
+    }).catch(function() { callback(null); });
+}
+
+// Drive上のスキャン写真データを取得
+function downloadFromDrive(callback) {
+  if (!gcalAccessToken) { callback(null); return; }
+  findDriveBackupFile(function(fileInfo) {
+    if (!fileInfo) { callback(null); return; }
+    fetch('https://www.googleapis.com/drive/v3/files/' + fileInfo.id + '?alt=media', {
+      headers: { 'Authorization': 'Bearer ' + gcalAccessToken }
+    }).then(function(resp) { return resp.json(); })
+      .then(function(data) { callback(data); })
+      .catch(function() { callback(null); });
+  });
+}
+
+// Drive上にスキャン写真データをアップロード
+function uploadToDrive(photos, callback) {
+  if (!gcalAccessToken) { if (callback) callback(false, 'ログインが必要'); return; }
+  var body = JSON.stringify({ photos: photos, updated: Date.now() });
+
+  var doUpload = function(fileId) {
+    var url, method;
+    if (fileId) {
+      url = 'https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media';
+      method = 'PATCH';
+    } else {
+      // 新規作成: multipart
+      var boundary = '-------takenobi_' + Date.now();
+      var metadata = { name: DRIVE_FILE_NAME, parents: ['appDataFolder'] };
+      var multipartBody =
+        '--' + boundary + '\r\n' +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) + '\r\n' +
+        '--' + boundary + '\r\n' +
+        'Content-Type: application/json\r\n\r\n' +
+        body + '\r\n' +
+        '--' + boundary + '--';
+      fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + gcalAccessToken,
+          'Content-Type': 'multipart/related; boundary=' + boundary
+        },
+        body: multipartBody
+      }).then(function(resp) { return resp.json(); })
+        .then(function(data) {
+          if (data.id) { _driveFileId = data.id; if (callback) callback(true); }
+          else { if (callback) callback(false, 'アップロード失敗'); }
+        }).catch(function(err) { if (callback) callback(false, err.message); });
+      return;
+    }
+    fetch(url, {
+      method: method,
+      headers: { 'Authorization': 'Bearer ' + gcalAccessToken, 'Content-Type': 'application/json' },
+      body: body
+    }).then(function(resp) {
+      if (resp.ok) { if (callback) callback(true); }
+      else { if (callback) callback(false, 'アップロード失敗: ' + resp.status); }
+    }).catch(function(err) { if (callback) callback(false, err.message); });
+  };
+
+  if (_driveFileId) { doUpload(_driveFileId); }
+  else {
+    findDriveBackupFile(function(info) { doUpload(info ? info.id : null); });
+  }
+}
+
+// Drive → ローカル 同期（Driveを真として全取込）
+function syncFromDrive(callback) {
+  downloadFromDrive(function(data) {
+    if (!data || !data.photos) { if (callback) callback(false, 'Driveに履歴なし'); return; }
+    var remotePhotos = data.photos;
+    var imported = 0, skipped = 0;
+    getScanPhotos(function(localPhotos) {
+      var localIds = {};
+      localPhotos.forEach(function(p) { localIds[p.id] = p; });
+      var pending = remotePhotos.length;
+      if (pending === 0) { if (callback) callback(true, '取込0件'); return; }
+      remotePhotos.forEach(function(p) {
+        var local = localIds[p.id];
+        if (!local || (p.timestamp || 0) > (local.timestamp || 0)) {
+          saveScanPhoto(p, function() {
+            imported++;
+            if (--pending === 0) { if (callback) callback(true, '取込' + imported + '件 / スキップ' + skipped + '件'); }
+          });
+        } else {
+          skipped++;
+          if (--pending === 0) { if (callback) callback(true, '取込' + imported + '件 / スキップ' + skipped + '件'); }
+        }
+      });
+    });
+  });
+}
+
+// ローカル → Drive 同期（ローカル全体をDriveに送信）
+function syncToDrive(callback) {
+  getScanPhotos(function(photos) {
+    uploadToDrive(photos, function(ok, err) {
+      if (ok) { if (callback) callback(true, photos.length + '件をバックアップ'); }
+      else { if (callback) callback(false, err || 'アップロード失敗'); }
+    });
+  });
+}
+
+// 双方向同期（両方をマージしてDriveに上書き）
+function syncDriveBoth(statusEl) {
+  if (!gcalAccessToken) {
+    if (statusEl) statusEl.textContent = '⚠️ 先にGoogleカレンダーにログインしてください';
+    return;
+  }
+  if (statusEl) statusEl.textContent = '☁️ Driveから取得中...';
+  downloadFromDrive(function(remote) {
+    getScanPhotos(function(local) {
+      var map = {};
+      local.forEach(function(p) { map[p.id] = p; });
+      if (remote && remote.photos) {
+        remote.photos.forEach(function(p) {
+          var existing = map[p.id];
+          if (!existing || (p.timestamp || 0) > (existing.timestamp || 0)) {
+            map[p.id] = p;
+          }
+        });
+      }
+      var merged = Object.keys(map).map(function(k) { return map[k]; });
+      // ローカル保存
+      var localPending = merged.length;
+      if (localPending === 0) {
+        uploadToDrive([], function(ok, err) {
+          if (statusEl) statusEl.textContent = ok ? '☁️ 同期完了（0件）' : '❌ ' + (err || 'エラー');
+        });
+        return;
+      }
+      merged.forEach(function(p) {
+        saveScanPhoto(p, function() {
+          if (--localPending === 0) {
+            if (statusEl) statusEl.textContent = '☁️ Driveへ送信中...';
+            uploadToDrive(merged, function(ok, err) {
+              if (ok) {
+                if (statusEl) statusEl.textContent = '✅ 同期完了（' + merged.length + '件）';
+                // 写真ギャラリー再描画
+                if (typeof renderScanPhotos === 'function') renderScanPhotos();
+                var countEl = document.getElementById('pgCount');
+                if (countEl) countEl.textContent = merged.length;
+              } else {
+                if (statusEl) statusEl.textContent = '❌ ' + (err || 'エラー');
+              }
+            });
+          }
+        });
+      });
+    });
   });
 }
 
