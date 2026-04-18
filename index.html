@@ -5069,6 +5069,20 @@ function deleteScanPhoto(id, callback) {
   });
 }
 
+// 再ログイン（Drive権限を再取得）
+function reloginForDrive() {
+  gcalAccessToken = null;
+  _driveFileId = null;
+  var statusEl = document.getElementById('driveSyncStatus');
+  if (statusEl) statusEl.textContent = '🔄 再ログイン中...';
+  // 強制的に権限画面を表示するため prompt: 'consent' を設定
+  if (tokenClient) {
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  } else if (typeof handleGcalAuth === 'function') {
+    handleGcalAuth();
+  }
+}
+
 // 同期ボタンのハンドラ
 function driveSyncClick() {
   var statusEl = document.getElementById('driveSyncStatus');
@@ -5097,30 +5111,45 @@ var _driveFileId = null;
 
 // Drive上のバックアップファイルIDを取得
 function findDriveBackupFile(callback) {
-  if (!gcalAccessToken) { callback(null); return; }
+  if (!gcalAccessToken) { callback(null, 'トークンなし'); return; }
   fetch('https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D%27' + encodeURIComponent(DRIVE_FILE_NAME) + '%27&fields=files(id,modifiedTime)', {
     headers: { 'Authorization': 'Bearer ' + gcalAccessToken }
-  }).then(function(resp) { return resp.json(); })
+  }).then(function(resp) {
+      if (!resp.ok) {
+        return resp.text().then(function(t) {
+          var errMsg = 'Drive検索失敗: ' + resp.status;
+          if (resp.status === 401) errMsg += '（再ログイン必要）';
+          else if (resp.status === 403) errMsg += '（Drive APIが無効、またはスコープ不足）';
+          console.error('[Drive]', errMsg, t);
+          throw new Error(errMsg);
+        });
+      }
+      return resp.json();
+    })
     .then(function(data) {
       if (data.files && data.files.length > 0) {
         _driveFileId = data.files[0].id;
-        callback(data.files[0]);
+        callback(data.files[0], null);
       } else {
-        callback(null);
+        callback(null, null); // ファイルなし（正常）
       }
-    }).catch(function() { callback(null); });
+    }).catch(function(err) { callback(null, err.message || 'エラー'); });
 }
 
 // Drive上のスキャン写真データを取得
 function downloadFromDrive(callback) {
-  if (!gcalAccessToken) { callback(null); return; }
-  findDriveBackupFile(function(fileInfo) {
-    if (!fileInfo) { callback(null); return; }
+  if (!gcalAccessToken) { callback(null, 'トークンなし'); return; }
+  findDriveBackupFile(function(fileInfo, err) {
+    if (err) { callback(null, err); return; }
+    if (!fileInfo) { callback(null, null); return; }
     fetch('https://www.googleapis.com/drive/v3/files/' + fileInfo.id + '?alt=media', {
       headers: { 'Authorization': 'Bearer ' + gcalAccessToken }
-    }).then(function(resp) { return resp.json(); })
-      .then(function(data) { callback(data); })
-      .catch(function() { callback(null); });
+    }).then(function(resp) {
+        if (!resp.ok) throw new Error('Driveダウンロード失敗: ' + resp.status);
+        return resp.json();
+      })
+      .then(function(data) { callback(data, null); })
+      .catch(function(e) { callback(null, e.message); });
   });
 }
 
@@ -5153,10 +5182,21 @@ function uploadToDrive(photos, callback) {
           'Content-Type': 'multipart/related; boundary=' + boundary
         },
         body: multipartBody
-      }).then(function(resp) { return resp.json(); })
+      }).then(function(resp) {
+          if (!resp.ok) {
+            return resp.text().then(function(t) {
+              var errMsg = 'アップロード失敗: ' + resp.status;
+              if (resp.status === 401) errMsg += '（再ログイン必要）';
+              else if (resp.status === 403) errMsg += '（Drive API未有効 or スコープ不足）';
+              console.error('[Drive upload]', errMsg, t);
+              throw new Error(errMsg);
+            });
+          }
+          return resp.json();
+        })
         .then(function(data) {
           if (data.id) { _driveFileId = data.id; if (callback) callback(true); }
-          else { if (callback) callback(false, 'アップロード失敗'); }
+          else { if (callback) callback(false, 'アップロード失敗: レスポンスにID無し'); }
         }).catch(function(err) { if (callback) callback(false, err.message); });
       return;
     }
@@ -5172,13 +5212,17 @@ function uploadToDrive(photos, callback) {
 
   if (_driveFileId) { doUpload(_driveFileId); }
   else {
-    findDriveBackupFile(function(info) { doUpload(info ? info.id : null); });
+    findDriveBackupFile(function(info, err) {
+      if (err) { if (callback) callback(false, err); return; }
+      doUpload(info ? info.id : null);
+    });
   }
 }
 
 // Drive → ローカル 同期（Driveを真として全取込）
 function syncFromDrive(callback) {
-  downloadFromDrive(function(data) {
+  downloadFromDrive(function(data, err) {
+    if (err) { if (callback) callback(false, err); return; }
     if (!data || !data.photos) { if (callback) callback(false, 'Driveに履歴なし'); return; }
     var remotePhotos = data.photos;
     var imported = 0, skipped = 0;
@@ -5220,7 +5264,13 @@ function syncDriveBoth(statusEl) {
     return;
   }
   if (statusEl) statusEl.textContent = '☁️ Driveから取得中...';
-  downloadFromDrive(function(remote) {
+  downloadFromDrive(function(remote, downloadErr) {
+    if (downloadErr) {
+      if (statusEl) {
+        statusEl.innerHTML = '❌ ' + escHtml(downloadErr) + ' <button onclick="reloginForDrive()" style="margin-left:8px;padding:2px 8px;background:#4285f4;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:10px;">再ログイン</button>';
+      }
+      return;
+    }
     getScanPhotos(function(local) {
       var map = {};
       local.forEach(function(p) { map[p.id] = p; });
@@ -5249,11 +5299,13 @@ function syncDriveBoth(statusEl) {
               if (ok) {
                 if (statusEl) statusEl.textContent = '✅ 同期完了（' + merged.length + '件）';
                 // 写真ギャラリー再描画
-                if (typeof renderScanPhotos === 'function') renderScanPhotos();
+                if (typeof renderPhotoGallery === 'function') renderPhotoGallery();
                 var countEl = document.getElementById('pgCount');
                 if (countEl) countEl.textContent = merged.length;
               } else {
-                if (statusEl) statusEl.textContent = '❌ ' + (err || 'エラー');
+                if (statusEl) {
+                  statusEl.innerHTML = '❌ ' + escHtml(err || 'エラー') + ' <button onclick="reloginForDrive()" style="margin-left:8px;padding:2px 8px;background:#4285f4;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:10px;">再ログイン</button>';
+                }
               }
             });
           }
