@@ -1029,6 +1029,9 @@ body::before {
 .month-cal-day.selected { background:rgba(218,165,32,0.2); border:1px solid var(--gold); }
 .month-cal-day.sun { color:#e06060; }
 .month-cal-day.sat { color:#6090e0; }
+.month-cal-day.holiday { color:#e06060; background:rgba(224,96,96,0.08); }
+.month-cal-day.holiday.today { background:rgba(224,96,96,0.18); }
+.month-cal-holiday-label { font-size:8px; line-height:1.1; color:#e06060; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
 .month-cal-selected-events { margin-top:8px; border-top:1px solid rgba(90,158,111,0.15); padding-top:8px; }
 .month-cal-selected-title { font-size:12px; color:var(--text-dim); margin-bottom:6px; }
 .month-cal-day.has-memo::before { content:''; position:absolute; top:3px; right:3px; width:5px; height:5px; border-radius:50%; background:#4caf50; }
@@ -3296,6 +3299,54 @@ function fetchMonthEvents() {
   });
 }
 
+// === 日本の祝日データ ===
+var JP_HOLIDAYS = {
+  // 2026年
+  '2026-01-01': '元日',
+  '2026-01-12': '成人の日',
+  '2026-02-11': '建国記念の日',
+  '2026-02-23': '天皇誕生日',
+  '2026-03-20': '春分の日',
+  '2026-04-29': '昭和の日',
+  '2026-05-03': '憲法記念日',
+  '2026-05-04': 'みどりの日',
+  '2026-05-05': 'こどもの日',
+  '2026-05-06': '振替休日',
+  '2026-07-20': '海の日',
+  '2026-08-11': '山の日',
+  '2026-09-21': '敬老の日',
+  '2026-09-22': '国民の休日',
+  '2026-09-23': '秋分の日',
+  '2026-10-12': 'スポーツの日',
+  '2026-11-03': '文化の日',
+  '2026-11-23': '勤労感謝の日',
+  // 2027年
+  '2027-01-01': '元日',
+  '2027-01-11': '成人の日',
+  '2027-02-11': '建国記念の日',
+  '2027-02-23': '天皇誕生日',
+  '2027-03-21': '春分の日',
+  '2027-03-22': '振替休日',
+  '2027-04-29': '昭和の日',
+  '2027-05-03': '憲法記念日',
+  '2027-05-04': 'みどりの日',
+  '2027-05-05': 'こどもの日',
+  '2027-07-19': '海の日',
+  '2027-08-11': '山の日',
+  '2027-09-20': '敬老の日',
+  '2027-09-23': '秋分の日',
+  '2027-10-11': 'スポーツの日',
+  '2027-11-03': '文化の日',
+  '2027-11-23': '勤労感謝の日'
+};
+
+function isJpHoliday(dateStr) {
+  return !!JP_HOLIDAYS[dateStr];
+}
+function getJpHolidayName(dateStr) {
+  return JP_HOLIDAYS[dateStr] || '';
+}
+
 function renderMonthCalendar() {
   var el = document.getElementById('monthCalendar');
   if (!el) return;
@@ -3331,8 +3382,12 @@ function renderMonthCalendar() {
     if (monthCalSelected === dateStr) cls += ' selected';
     if (dayOfWeek === 0) cls += ' sun';
     if (dayOfWeek === 6) cls += ' sat';
+    if (isJpHoliday(dateStr)) cls += ' holiday';
     if (localStorage.getItem('cal_memo_' + dateStr)) cls += ' has-memo';
-    html += '<div class="' + cls + '" onclick="selectCalDay(\'' + dateStr + '\')">' + d + '</div>';
+    var holidayName = getJpHolidayName(dateStr);
+    var titleAttr = holidayName ? ' title="' + escHtml(holidayName) + '"' : '';
+    var holidayLabel = holidayName ? '<div class="month-cal-holiday-label">' + escHtml(holidayName) + '</div>' : '';
+    html += '<div class="' + cls + '"' + titleAttr + ' onclick="selectCalDay(\'' + dateStr + '\')">' + d + holidayLabel + '</div>';
   }
   // 次月
   var totalCells = firstDay + daysInMonth;
